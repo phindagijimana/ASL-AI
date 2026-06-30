@@ -1,0 +1,11 @@
+# Python deps (install: pip install -r requirements.txt).
+# Tested on Python 3.9.
+pydicom==2.4.4
+nibabel==5.3.3
+
+# Non-Python tools required on PATH (not installed by pip):
+#   dcm2niix     v1.0.20250505  (https://github.com/rordenlab/dcm2niix)
+#   FreeSurfer   7.2.0          (URMC cluster: /opt/freesurfer-7.2.0)
+#                  Apptainer.def bundles a different version -- if you
+#                  build asl-ai.sif and care about reproducibility,
+#                  align the version there with the host install above.

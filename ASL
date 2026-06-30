@@ -1,0 +1,123 @@
+#!/bin/bash
+# ASL-AI command-line interface.
+#
+#   ./ASL install   Python deps, local config template, output dirs
+#   ./ASL start     Submit SLURM array for subjects.tsv
+#   ./ASL check     Queue status and per-subject progress
+#   ./ASL logs      Show or follow pipeline logs
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT"
+
+usage() {
+  cat <<EOF
+usage: ./ASL <command> [args]
+
+commands:
+  install          Install Python dependencies and create local config
+  start            Submit pipeline jobs (requires subjects.tsv)
+  check            Show SLURM status and subject progress
+  logs [sub-id]    Tail latest log, or a specific subject log
+EOF
+}
+
+load_env() {
+  if [ -f "$ROOT/config.local.env" ]; then
+    # shellcheck disable=SC1091
+    source "$ROOT/config.local.env"
+  fi
+  if [ -z "${ASL_AI_FS_MODE:-}" ]; then
+    # shellcheck disable=SC1091
+    source "$ROOT/slurm/env.sh"
+  fi
+}
+
+cmd_install() {
+  echo "[install] Python packages"
+  python3 -m pip install --user -r "$ROOT/requirements.txt"
+
+  if ! command -v dcm2niix >/dev/null 2>&1; then
+    echo "[install] warning: dcm2niix not on PATH (required for Step 1)"
+  fi
+
+  mkdir -p "$ROOT/Data_ASL/logs" "$ROOT/freesurfer_subjects"
+
+  if [ ! -f "$ROOT/config.local.env" ]; then
+    cp "$ROOT/config.local.env.example" "$ROOT/config.local.env"
+    echo "[install] created config.local.env — set FS_LICENSE"
+  fi
+
+  if [ ! -f "$ROOT/subjects.tsv" ]; then
+    cp "$ROOT/subjects.tsv.example" "$ROOT/subjects.tsv"
+    echo "[install] created subjects.tsv — add your subjects"
+  fi
+
+  echo "[install] done"
+}
+
+cmd_start() {
+  load_env
+  local subjects="${SUBJECTS_TSV:-$ROOT/subjects.tsv}"
+  [ -f "$subjects" ] || {
+    echo "error: missing $subjects (copy subjects.tsv.example)" >&2
+    exit 1
+  }
+  "$ROOT/slurm/sbatch_all.sh" "$subjects"
+}
+
+cmd_check() {
+  load_env
+  local subjects="${SUBJECTS_TSV:-$ROOT/subjects.tsv}"
+
+  echo "=== queue (asl-ai) ==="
+  if command -v squeue >/dev/null 2>&1; then
+    squeue -u "$USER" -n asl-ai 2>/dev/null || true
+  else
+    echo "squeue not available"
+  fi
+
+  echo
+  echo "=== subjects ==="
+  [ -f "$subjects" ] || { echo "no $subjects"; return 0; }
+
+  while IFS=$'\t' read -r dcm sub _rest; do
+    [[ "$dcm" =~ ^[[:space:]]*(#|$) ]] && continue
+    [ -n "$sub" ] || continue
+    local recon="$SUBJECTS_DIR/$sub/scripts/recon-all.done"
+    local ai_dir="$ROOT/Data_ASL/derivatives/asl-ai/$sub"
+    local n_ai=0
+    [ -d "$ai_dir" ] && n_ai=$(find "$ai_dir" -maxdepth 1 -name '*_AI.csv' 2>/dev/null | wc -l)
+    printf '%s  recon=%s  ai_csv=%s\n' "$sub" \
+      "$([ -f "$recon" ] && echo done || echo pending)" "$n_ai"
+  done < "$subjects"
+}
+
+cmd_logs() {
+  local sub="${1:-}"
+  local logdir="$ROOT/Data_ASL/logs"
+
+  if [ -n "$sub" ]; then
+    exec tail -f "$logdir/${sub}_pipeline.log"
+  fi
+
+  local latest
+  latest=$(ls -t "$logdir"/*pipeline.log 2>/dev/null | head -1 || true)
+  if [ -z "$latest" ]; then
+    echo "no pipeline logs in $logdir"
+    exit 0
+  fi
+  echo "latest: $latest"
+  tail -40 "$latest"
+}
+
+[ $# -ge 1 ] || { usage; exit 1; }
+case "$1" in
+  install) cmd_install ;;
+  start)   cmd_start ;;
+  check)   cmd_check ;;
+  logs)    shift; cmd_logs "${1:-}" ;;
+  -h|--help|help) usage ;;
+  *) echo "unknown command: $1" >&2; usage; exit 1 ;;
+esac

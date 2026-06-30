@@ -1,0 +1,88 @@
+Bootstrap: docker
+From: freesurfer/freesurfer:7.4.1
+
+# Apptainer/Singularity image bundling the full ASL-AI pipeline.
+#
+# Build (one-time, requires --fakeroot or root):
+#   apptainer build asl-ai.sif Apptainer.def
+#
+# Run (FreeSurfer license must be bind-mounted at runtime; it is NOT
+# baked into the image because the FreeSurfer license is not
+# redistributable):
+#
+#   export FS_LICENSE=/path/to/freesurfer/license.txt
+#   export SUBJECTS_DIR=/path/to/freesurfer_subjects
+#   apptainer run \
+#     -B "$FS_LICENSE":/opt/freesurfer/license.txt \
+#     -B "$SUBJECTS_DIR":/subjects_dir \
+#     -B "$PWD":/work \
+#     asl-ai.sif \
+#     /work/run_subject.sh /path/to/dicom sub-001
+#
+# Inside the container SUBJECTS_DIR is overridden to /subjects_dir
+# by the %environment block below.
+
+%labels
+    Maintainer ASL-AI
+    Version 1.0
+    BIDSVersion 1.10.0
+    FreeSurferVersion 7.4.1
+    dcm2niixVersion v1.0.20250505
+
+%post
+    set -euo pipefail
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        python3 python3-pip wget unzip ca-certificates curl
+    rm -rf /var/lib/apt/lists/*
+
+    # dcm2niix (precompiled Linux binary, pinned)
+    wget -q -O /tmp/dcm2niix.zip \
+        https://github.com/rordenlab/dcm2niix/releases/download/v1.0.20250505/dcm2niix_lnx.zip
+    unzip -o /tmp/dcm2niix.zip -d /usr/local/bin/
+    chmod +x /usr/local/bin/dcm2niix
+    rm /tmp/dcm2niix.zip
+    dcm2niix -v >/dev/null   # smoke test
+
+    # Python deps (match requirements.txt)
+    pip3 install --no-cache-dir pydicom==2.4.4 nibabel==5.3.3
+
+    # bids-validator (Deno-based runtime; small and self-contained)
+    curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh -s -- -y
+    /usr/local/bin/deno --version
+
+    # Pipeline scripts -- COPYed via %files below
+    mkdir -p /opt/asl-ai
+
+%files
+    asl_ai_pipeline.sh         /opt/asl-ai/asl_ai_pipeline.sh
+    dicom_to_bids.py           /opt/asl-ai/dicom_to_bids.py
+    extract_asl_derivatives.py /opt/asl-ai/extract_asl_derivatives.py
+    compute_asymmetry.py       /opt/asl-ai/compute_asymmetry.py
+    run_subject.sh             /opt/asl-ai/run_subject.sh
+    run_batch.sh               /opt/asl-ai/run_batch.sh
+    validate_bids.sh           /opt/asl-ai/validate_bids.sh
+
+%environment
+    export FREESURFER_HOME=/opt/freesurfer
+    export FS_LICENSE=/opt/freesurfer/license.txt
+    export SUBJECTS_DIR=/subjects_dir
+    export PATH=/opt/asl-ai:/usr/local/bin:$FREESURFER_HOME/bin:$FREESURFER_HOME/mni/bin:$PATH
+    # Activate FreeSurfer (sets PERL5LIB, MINC paths, etc.)
+    . $FREESURFER_HOME/SetUpFreeSurfer.sh >/dev/null
+
+%runscript
+    # Default: print usage. Override by passing a command, e.g.
+    #   apptainer run asl-ai.sif /opt/asl-ai/run_subject.sh ...
+    exec "$@"
+
+%test
+    set -e
+    command -v dcm2niix
+    command -v recon-all
+    command -v deno
+    python3 -c "import pydicom, nibabel"
+    test -x /opt/asl-ai/run_subject.sh
+    test -x /opt/asl-ai/asl_ai_pipeline.sh
+    echo "all smoke tests passed"

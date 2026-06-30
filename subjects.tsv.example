@@ -1,0 +1,3 @@
+# Tab-separated: <dicom_dir>  <sub_id>
+# Copy to subjects.tsv and add your subjects.
+/path/to/dicom/folder	sub-001

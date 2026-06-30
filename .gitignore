@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+
+# Local config and subject lists (site-specific)
+config.local.env
+subjects.tsv
+
+# Run outputs
+Data_ASL/
+freesurfer_subjects/
+
+# Apptainer artifacts
+containers/*.sif
+containers/bin/
+
+.claude/
+.cursor/
