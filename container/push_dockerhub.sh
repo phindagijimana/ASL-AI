@@ -141,6 +141,13 @@ push_sif_to_dockerhub() {
     echo "Tagging latest..."
     skopeo copy --authfile "$authfile" "sif:$sif" "docker://${image_base#docker.io/}:latest"
   fi
+
+  verify_published
+}
+
+verify_published() {
+  command -v skopeo >/dev/null || return 0
+  skopeo inspect "docker://${image_base#docker.io/}:${tag}" >/dev/null 2>&1
 }
 
 push_with_kaniko() {
@@ -175,6 +182,8 @@ push_with_kaniko() {
     --destination="$image" \
     --destination="${image_base}:latest" \
     --cache=false
+
+  verify_published
 }
 
 push_with_podman_or_docker() {
@@ -208,6 +217,7 @@ push_with_podman_or_docker() {
   fi
   "${builder[@]}" push --authfile "$authfile" "$image"
   "${builder[@]}" push --authfile "$authfile" "${image_base}:latest"
+  verify_published
 }
 
 main() {
