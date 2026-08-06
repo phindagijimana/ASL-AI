@@ -1,0 +1,6 @@
+# Python compute container: derivatives, AI, PDF reports
+nibabel>=5.3
+numpy>=1.23
+reportlab>=4.0
+matplotlib>=3.7
+pandas>=1.5

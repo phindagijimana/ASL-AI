@@ -23,10 +23,9 @@ set -euo pipefail
 
 cmd="$(basename "$0")"
 
-# Optional DICOM mount (set ASL_DICOM_ROOT in config.local.env).
 extra_binds=()
-if [ -n "${ASL_DICOM_ROOT:-}" ] && [ -d "$ASL_DICOM_ROOT" ]; then
-  extra_binds+=(--bind "$ASL_DICOM_ROOT:$ASL_DICOM_ROOT")
+if [ -d /mnt/nfs/Gugger_Lab ]; then
+  extra_binds+=(--bind /mnt/nfs/Gugger_Lab:/mnt/nfs/Gugger_Lab)
 fi
 
 exec apptainer exec \

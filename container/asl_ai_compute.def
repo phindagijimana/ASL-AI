@@ -1,0 +1,25 @@
+Bootstrap: docker
+From: python:3.11-slim-bookworm
+
+%labels
+    Author ASL-AI
+    Version 1.0.0
+
+%environment
+    export PYTHONPATH=/asl-ai
+    export MPLCONFIGDIR=/tmp/matplotlib-${USER:-nobody}
+    export PYTHONUNBUFFERED=1
+
+%post
+    apt-get update
+    apt-get install -y --no-install-recommends fonts-dejavu-core
+    rm -rf /var/lib/apt/lists/*
+    pip install --no-cache-dir \
+        'nibabel>=5.3' \
+        'numpy>=1.23' \
+        'reportlab>=4.0' \
+        'matplotlib>=3.7' \
+        'pandas>=1.5'
+
+%runscript
+    exec python3 "$@"

@@ -2,7 +2,7 @@
 #
 # ASL -> FreeSurfer regional stats -> asymmetry index pipeline.
 #
-# recon-all:    ./asl_ai_pipeline.sh recon   <sub_id> <bids_root>
+# recon-all:    ./asl_ai_pipeline.sh recon [--fastsurfer] <sub_id> <bids_root>
 # Per-subject:  ./asl_ai_pipeline.sh subject <sub_id> <bids_root> [acq_label]
 # Group table:  ./asl_ai_pipeline.sh group   <sublist.txt> <stats_filename> <out_table.txt>
 # Asymmetry:    ./asl_ai_pipeline.sh ai      <input.txt> <output.csv>
@@ -31,12 +31,32 @@
 #
 # recon-all uses OMP_THREADS (default 4). It is long (~6-12 h):
 #   OMP_THREADS=8 nohup ./asl_ai_pipeline.sh recon sub-XXX Data_ASL/ &> recon-sub-XXX.log &
+#
+# FastSurfer alternative (~minutes on CPU, faster on GPU):
+#   OMP_THREADS=8 ./asl_ai_pipeline.sh recon --fastsurfer sub-XXX Data_ASL/
 
 set -euo pipefail
 
-usage() { echo "usage: $0 {recon|subject|group|ai} ..." >&2; exit 1; }
+usage() {
+  echo "usage: $0 {recon|subject|group|ai} ..." >&2
+  echo "       recon [--fastsurfer] <sub_id> <bids_root>" >&2
+  exit 1
+}
+
+# Strip global flags before dispatching on mode.
+USE_FASTSURFER=0
+args=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --fastsurfer) USE_FASTSURFER=1; shift ;;
+    -h|--help) usage ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+set -- "${args[@]}"
 [ $# -ge 1 ] || usage
 mode="$1"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 case "$mode" in
   recon)
@@ -50,6 +70,17 @@ case "$mode" in
     if [ ! -f "$t1w" ]; then
       echo "error: T1w not found at $t1w" >&2
       exit 1
+    fi
+
+    aparc="$SUBJECTS_DIR/$sub/mri/aparc+aseg.mgz"
+    if [ -f "$aparc" ]; then
+      echo "parcellation already present at $aparc -- skipping recon"
+      exit 0
+    fi
+
+    if [ "$USE_FASTSURFER" = 1 ]; then
+      "$script_dir/run_fastsurfer_recon.sh" "$sub" "$t1w"
+      exit 0
     fi
 
     done_marker="$SUBJECTS_DIR/$sub/scripts/recon-all.done"
@@ -79,8 +110,7 @@ case "$mode" in
     fi
 
     # Build the mean-control + mean-deltaM derivatives (idempotent).
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    python3 "$script_dir/extract_asl_derivatives.py" "$bids_root" "$sub" "$acq"
+    "$script_dir/run_compute_py.sh" "$script_dir/extract_asl_derivatives.py" "$bids_root" "$sub" "$acq"
     mean_ctrl="$bids_root/derivatives/asl-mean-control/$sub/perf/${sub}_acq-${acq}_desc-meanControl_asl.nii.gz"
     [ -f "$mean_ctrl" ] || { echo "error: mean-control not produced: $mean_ctrl" >&2; exit 1; }
 
@@ -132,7 +162,7 @@ case "$mode" in
     out_file="${3:?output csv required}"
 
     script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    python3 "$script_dir/compute_asymmetry.py" "$in_file" "$out_file"
+    "$script_dir/run_compute_py.sh" "$script_dir/compute_asymmetry.py" "$in_file" "$out_file"
     ;;
 
   *)

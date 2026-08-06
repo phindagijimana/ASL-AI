@@ -73,6 +73,8 @@ echo "  DICOM source   : $dicom_dir"
 echo "  FS mode        : $ASL_AI_FS_MODE"
 [ "$ASL_AI_FS_MODE" = "host" ]      && echo "  FREESURFER_HOME: $FREESURFER_HOME"
 [ "$ASL_AI_FS_MODE" = "container" ] && echo "  FREESURFER_SIF : $FREESURFER_SIF"
+echo "  recon mode     : ${ASL_AI_RECON:-recon-all}"
+[ "${ASL_AI_RECON:-}" = "fastsurfer" ] && echo "  FASTSURFER_SIF : ${FASTSURFER_SIF:-<unset>}"
 echo "  SUBJECTS_DIR   : $SUBJECTS_DIR"
 echo "  CPUs           : $SLURM_CPUS_PER_TASK"
 
@@ -85,4 +87,9 @@ fi
 
 export OMP_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 cd "$repo_root"
-./run_subject.sh "$dicom_dir" "$sub_id"
+
+recon_args=()
+if [ "${ASL_AI_RECON:-}" = "fastsurfer" ]; then
+  recon_args=(--fastsurfer)
+fi
+./run_subject.sh "${recon_args[@]}" "$dicom_dir" "$sub_id"

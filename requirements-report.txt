@@ -1,0 +1,5 @@
+# Optional dependencies for clinical PDF reports (ASL-AI report)
+reportlab>=4.0
+matplotlib>=3.7
+pandas>=1.5
+numpy>=1.23

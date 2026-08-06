@@ -32,9 +32,11 @@ fi
 echo "submitting array 1-$n on partition 'general'"
 echo "  subjects.tsv    : $subjects_tsv"
 echo "  FS mode         : $ASL_AI_FS_MODE"
+echo "  recon mode      : ${ASL_AI_RECON:-recon-all}"
 echo "  SUBJECTS_DIR    : $SUBJECTS_DIR"
 echo "  FS_LICENSE      : ${FS_LICENSE:-<unset>}"
 [ "$ASL_AI_FS_MODE" = "container" ] && echo "  FREESURFER_SIF  : $FREESURFER_SIF"
+[ "${ASL_AI_RECON:-}" = "fastsurfer" ] && echo "  FASTSURFER_SIF  : ${FASTSURFER_SIF:-<unset>}"
 
 # Use --export=ALL (the default) so the env above reaches the job.
 sbatch \
