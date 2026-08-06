@@ -147,7 +147,8 @@ push_with_kaniko() {
   local apptainer kaniko_sif kaniko_work kaniko_cfg authfile
   apptainer="$(apptainer_cmd)"
   kaniko_sif="$(ensure_kaniko_sif)"
-  kaniko_work="$build_tmp/kaniko-work"
+  # Use host /tmp (not NFS) — Kaniko chowns its workdir; OOD /tmp may be noexec.
+  kaniko_work="${KANIKO_WORKDIR:-/tmp/asl-ai-kaniko-${USER:-nobody}}"
   kaniko_cfg="$build_tmp/kaniko-docker-config"
   mkdir -p "$kaniko_work" "$kaniko_cfg"
   authfile="$(resolve_authfile)"
@@ -158,18 +159,17 @@ push_with_kaniko() {
   echo "  kaniko-dir: $kaniko_work"
   echo "  executor:   $kaniko_sif"
 
-  # Writable --kaniko-dir avoids "open /kaniko/Dockerfile: read-only file system".
-  # Arguments after "--" are passed to the Kaniko executor entrypoint.
   "$apptainer" run --cleanenv \
     --env "DOCKER_CONFIG=/docker-config" \
-    --env "KANIKO_DIR=/kaniko-work" \
+    --env "KANIKO_DIR=$kaniko_work" \
     --bind "$repo_dir:/workspace" \
     --bind "$kaniko_cfg:/docker-config:ro" \
-    --bind "$kaniko_work:/kaniko-work" \
+    --bind "$kaniko_work:$kaniko_work" \
     --bind /mnt/nfs \
     "$kaniko_sif" \
     -- \
-    --kaniko-dir=/kaniko-work \
+    --force \
+    --kaniko-dir="$kaniko_work" \
     --dockerfile=container/Dockerfile \
     --context=dir:///workspace \
     --destination="$image" \
@@ -215,16 +215,26 @@ main() {
   echo "Target: $image (+ ${image_base}:latest)"
   echo
 
+  local published=0
+
+  ensure_sif
+
+  set +e
   if [[ "${ASL_AI_USE_DOCKER_BUILD:-}" == 1 ]]; then
-    push_with_podman_or_docker
-  elif push_with_podman_or_docker 2>/dev/null; then
-    :
-  elif push_sif_to_dockerhub 2>/dev/null; then
-    :
-  else
-    echo "podman/skopeo unavailable on this host — using Kaniko via Apptainer." >&2
-    ensure_sif
-    push_with_kaniko
+    push_with_podman_or_docker && published=1
+  elif push_with_podman_or_docker; then
+    published=1
+  elif push_sif_to_dockerhub; then
+    published=1
+  elif push_with_kaniko; then
+    published=1
+  fi
+  set -e
+
+  if [[ "$published" -ne 1 ]]; then
+    echo "Docker Hub publish failed on this node." >&2
+    echo "Try a compute node: sbatch slurm/push_dockerhub.sh" >&2
+    exit 1
   fi
 
   echo

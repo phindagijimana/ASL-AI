@@ -7,10 +7,10 @@
 #SBATCH --output=/mnt/nfs/home/urmc-sh.rochester.edu/pndagiji/Documents/ASL-AI/Data_ASL/logs/docker_push_%j.log
 
 # Build ASL-AI compute Docker image and push to Docker Hub.
-# Requires Docker Hub credentials on the build node:
-#   export DOCKERHUB_USER=phindagijimana321
-#   export DOCKERHUB_TOKEN=...
-# or: podman login docker.io  (before sbatch)
+# Run on a compute node (OOD lacks subuid/fakeroot for podman/skopeo).
+#
+#   podman login docker.io -u phindagijimana321   # before sbatch
+#   sbatch slurm/push_dockerhub.sh
 
 set -euo pipefail
 
