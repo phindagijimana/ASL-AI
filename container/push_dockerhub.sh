@@ -92,11 +92,42 @@ push_with_apptainer_from_sif() {
 }
 
 push_with_kaniko() {
-  local apptainer kaniko_cfg kaniko_work
+  local apptainer kaniko_work
   apptainer="$(apptainer_cmd)"
-  kaniko_cfg="$(docker_config_dir)"
   kaniko_work="$build_tmp/kaniko-work"
-  mkdir -p "$kaniko_work"
+  mkdir -p "$kaniko_work/.docker"
+  if [[ -n "${DOCKERHUB_TOKEN:-}" ]]; then
+    local auth
+    auth="$(printf '%s:%s' "$user" "$DOCKERHUB_TOKEN" | base64 | tr -d '\n')"
+    cat > "$kaniko_work/.docker/config.json" <<EOF
+{
+  "auths": {
+    "https://index.docker.io/v1/": {
+      "auth": "$auth"
+    }
+  }
+}
+EOF
+  elif [[ -f "${HOME}/.config/containers/auth.json" ]]; then
+    cp "${HOME}/.config/containers/auth.json" "$kaniko_work/.docker/config.json"
+  elif [[ -f "${XDG_RUNTIME_DIR:-}/containers/auth.json" ]]; then
+    cp "${XDG_RUNTIME_DIR}/containers/auth.json" "$kaniko_work/.docker/config.json"
+  else
+    cat >&2 <<EOF
+Docker Hub credentials required. Either:
+
+  export DOCKERHUB_USER=$user
+  export DOCKERHUB_TOKEN=<access token from hub.docker.com/settings/security>
+
+or run once:
+
+  podman login docker.io
+
+Then rerun: ./container/push_dockerhub.sh $tag
+EOF
+    exit 4
+  fi
+
   local kaniko_image="${ASL_AI_KANIKO_IMAGE:-docker://gcr.io/kaniko-project/executor:v1.23.2}"
 
   echo "Building and pushing with Kaniko (Apptainer)..."
@@ -106,7 +137,6 @@ push_with_kaniko() {
 
   "$apptainer" run --cleanenv \
     --bind "$repo_dir:/workspace" \
-    --bind "$kaniko_cfg:/kaniko/.docker:ro" \
     --bind "$kaniko_work:/kaniko" \
     --bind /mnt/nfs \
     "$kaniko_image" \
