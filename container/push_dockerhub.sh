@@ -2,16 +2,19 @@
 # Build and push the ASL-AI compute image to Docker Hub.
 #
 # Usage:
-#   export DOCKERHUB_USER=phindagijimana321
-#   export DOCKERHUB_TOKEN=<docker hub access token>
+#   podman login docker.io -u phindagijimana321
 #   ./container/push_dockerhub.sh [tag]
 #
-# On URMC OOD/compute nodes, podman/docker build often fails (no subuid).
-# This script falls back to Kaniko via Apptainer, which works on the cluster.
+# Or:
+#   export DOCKERHUB_USER=phindagijimana321
+#   export DOCKERHUB_TOKEN=dckr_pat_xxxxxxxx
+#   ./container/push_dockerhub.sh [tag]
+#
+# On URMC OOD nodes (no subuid), podman/docker build and skopeo SIF push
+# usually fail. The script falls back to Kaniko via Apptainer with a writable
+# --kaniko-dir (fixes "open /kaniko/Dockerfile: read-only file system").
 #
 # Default image: docker.io/phindagijimana321/asl-ai-compute:<tag>
-# Override with ASL_AI_DOCKER_IMAGE (full name without tag).
-# Force Kaniko: ASL_AI_USE_KANIKO=1 ./container/push_dockerhub.sh
 
 set -euo pipefail
 
@@ -20,6 +23,7 @@ tag="${1:-latest}"
 image_base="${ASL_AI_DOCKER_IMAGE:-docker.io/phindagijimana321/asl-ai-compute}"
 image="${image_base}:${tag}"
 user="${DOCKERHUB_USER:-phindagijimana321}"
+sif="${ASL_AI_COMPUTE_SIF:-$repo_dir/compute/asl_ai_compute.sif}"
 
 build_tmp="$repo_dir/compute/build-tmp"
 mkdir -p "$build_tmp" "$repo_dir/compute/cache"
@@ -30,121 +34,144 @@ export TMPDIR="$build_tmp"
 
 apptainer_cmd() {
   command -v apptainer >/dev/null || command -v singularity >/dev/null || {
-    echo "Apptainer/Singularity required for Kaniko fallback" >&2
+    echo "Apptainer/Singularity required on this host" >&2
     exit 3
   }
   command -v apptainer || command -v singularity
 }
 
-docker_config_dir() {
-  local cfg="$build_tmp/kaniko-docker-config"
-  mkdir -p "$cfg"
+resolve_authfile() {
   if [[ -n "${DOCKERHUB_TOKEN:-}" ]]; then
-    local auth
-    auth="$(printf '%s:%s' "$user" "$DOCKERHUB_TOKEN" | base64 | tr -d '\n')"
-    cat > "$cfg/config.json" <<EOF
-{
-  "auths": {
-    "https://index.docker.io/v1/": {
-      "auth": "$auth"
-    }
-  }
-}
-EOF
-  elif [[ -f "${HOME}/.config/containers/auth.json" ]]; then
-    cp "${HOME}/.config/containers/auth.json" "$cfg/config.json"
-  elif [[ -f "${XDG_RUNTIME_DIR:-}/containers/auth.json" ]]; then
-    cp "${XDG_RUNTIME_DIR}/containers/auth.json" "$cfg/config.json"
-  else
-    cat >&2 <<EOF
+    if [[ "$DOCKERHUB_TOKEN" == *"your Docker Hub"* ]] || [[ "$DOCKERHUB_TOKEN" == "<"* ]]; then
+      echo "DOCKERHUB_TOKEN looks like a placeholder — paste your real token." >&2
+      exit 4
+    fi
+    write_docker_authfile
+    return 0
+  fi
+  local candidates=(
+    "${DOCKER_AUTHFILE:-}"
+    "${XDG_RUNTIME_DIR:-}/containers/auth.json"
+    "/run/user/$(id -u)/containers/auth.json"
+    "${HOME}/.config/containers/auth.json"
+    "${XDG_CONFIG_HOME:-}/containers/auth.json"
+    "${HOME}/.docker/config.json"
+  )
+  local c
+  for c in "${candidates[@]}"; do
+    if [[ -n "$c" && -f "$c" ]]; then
+      echo "Using credentials from: $c" >&2
+      echo "$c"
+      return 0
+    fi
+  done
+  cat >&2 <<EOF
 Docker Hub credentials required. Either:
 
   export DOCKERHUB_USER=$user
-  export DOCKERHUB_TOKEN=<access token from hub.docker.com/settings/security>
+  export DOCKERHUB_TOKEN=dckr_pat_xxxxxxxx
 
-or run once:
-
-  podman login docker.io
-
-Then rerun: ./container/push_dockerhub.sh $tag
-EOF
-    exit 4
-  fi
-  echo "$cfg"
-}
-
-push_with_apptainer_from_sif() {
-  local apptainer sif="$compute_dir/asl_ai_compute.sif"
-  apptainer="$(apptainer_cmd)"
-
-  if [[ ! -f "$sif" ]]; then
-    def="$repo_dir/container/asl_ai_compute.def"
-    [[ -f "$def" ]] || { echo "Missing SIF and Apptainer def: $def" >&2; return 1; }
-    echo "Building local SIF for Docker Hub export..."
-    "$apptainer" build "$sif" "$def"
-  fi
-
-  echo "Pushing SIF to Docker Hub via apptainer push..."
-  echo "  sif:    $sif"
-  echo "  image:  $image"
-  "$apptainer" push "$sif" "docker://${image_base}:${tag}"
-  "$apptainer" push "$sif" "docker://${image_base}:latest"
-}
-
-push_with_kaniko() {
-  local apptainer kaniko_cfg
-  apptainer="$(apptainer_cmd)"
-  kaniko_cfg="$build_tmp/kaniko-docker-config"
-  mkdir -p "$kaniko_cfg"
-  if [[ -n "${DOCKERHUB_TOKEN:-}" ]]; then
-    local auth
-    auth="$(printf '%s:%s' "$user" "$DOCKERHUB_TOKEN" | base64 | tr -d '\n')"
-    cat > "$kaniko_cfg/config.json" <<EOF
-{
-  "auths": {
-    "https://index.docker.io/v1/": {
-      "auth": "$auth"
-    }
-  }
-}
-EOF
-  elif [[ -f "${HOME}/.docker/config.json" ]]; then
-    cp "${HOME}/.docker/config.json" "$kaniko_cfg/config.json"
-  elif [[ -f "${HOME}/.config/containers/auth.json" ]]; then
-    cp "${HOME}/.config/containers/auth.json" "$kaniko_cfg/config.json"
-  elif [[ -f "${XDG_RUNTIME_DIR:-}/containers/auth.json" ]]; then
-    cp "${XDG_RUNTIME_DIR}/containers/auth.json" "$kaniko_cfg/config.json"
-  else
-    cat >&2 <<EOF
-Docker Hub credentials required. Either:
-
-  export DOCKERHUB_USER=$user
-  export DOCKERHUB_TOKEN=<access token from hub.docker.com/settings/security>
-
-or run once:
+or log in once:
 
   podman login docker.io -u $user
 
-Then rerun: ./container/push_dockerhub.sh $tag
+Create a token at: https://hub.docker.com/settings/security
 EOF
-    exit 4
+  exit 4
+}
+
+write_docker_authfile() {
+  local authfile="$build_tmp/docker-auth.json"
+  local auth
+  auth="$(printf '%s:%s' "$user" "$DOCKERHUB_TOKEN" | base64 | tr -d '\n')"
+  cat > "$authfile" <<EOF
+{
+  "auths": {
+    "https://index.docker.io/v1/": {
+      "auth": "$auth"
+    }
+  }
+}
+EOF
+  echo "$authfile"
+}
+
+ensure_sif() {
+  local apptainer def
+  apptainer="$(apptainer_cmd)"
+  def="$repo_dir/container/asl_ai_compute.def"
+  [[ -f "$def" ]] || { echo "Missing Apptainer def: $def" >&2; exit 4; }
+
+  if [[ -f "$sif" ]]; then
+    echo "Using existing SIF: $sif"
+    return 0
   fi
 
-  local kaniko_image="${ASL_AI_KANIKO_IMAGE:-docker://gcr.io/kaniko-project/executor:v1.23.2}"
+  echo "Building SIF (first time; ~2–5 min)..."
+  echo "  def: $def"
+  echo "  out: $sif"
+  "$apptainer" build --force "$sif" "$def"
+}
+
+ensure_kaniko_sif() {
+  local apptainer kaniko_sif="$repo_dir/compute/cache/kaniko-executor.sif"
+  apptainer="$(apptainer_cmd)"
+  local kaniko_ref="${ASL_AI_KANIKO_IMAGE:-docker://gcr.io/kaniko-project/executor:v1.23.2}"
+
+  if [[ ! -f "$kaniko_sif" ]]; then
+    echo "Pulling Kaniko executor (one-time)..."
+    "$apptainer" pull "$kaniko_sif" "$kaniko_ref"
+  fi
+  echo "$kaniko_sif"
+}
+
+push_sif_to_dockerhub() {
+  command -v skopeo >/dev/null || return 1
+  local authfile uri
+  authfile="$(resolve_authfile)"
+  uri="docker://${image_base#docker.io/}:${tag}"
+
+  echo "Pushing SIF to Docker Hub via skopeo..."
+  echo "  sif:  $sif"
+  echo "  uri:  $uri"
+
+  skopeo copy --authfile "$authfile" "sif:$sif" "$uri"
+
+  if [[ "$tag" != "latest" ]]; then
+    echo "Tagging latest..."
+    skopeo copy --authfile "$authfile" "sif:$sif" "docker://${image_base#docker.io/}:latest"
+  fi
+}
+
+push_with_kaniko() {
+  local apptainer kaniko_sif kaniko_work kaniko_cfg authfile
+  apptainer="$(apptainer_cmd)"
+  kaniko_sif="$(ensure_kaniko_sif)"
+  kaniko_work="$build_tmp/kaniko-work"
+  kaniko_cfg="$build_tmp/kaniko-docker-config"
+  mkdir -p "$kaniko_work" "$kaniko_cfg"
+  authfile="$(resolve_authfile)"
+  cp "$authfile" "$kaniko_cfg/config.json"
 
   echo "Building and pushing with Kaniko (Apptainer)..."
-  echo "  image:  $image"
-  echo "  latest: ${image_base}:latest"
-  echo "  tmp:    $build_tmp"
+  echo "  image:      $image"
+  echo "  kaniko-dir: $kaniko_work"
+  echo "  executor:   $kaniko_sif"
 
+  # Writable --kaniko-dir avoids "open /kaniko/Dockerfile: read-only file system".
+  # Arguments after "--" are passed to the Kaniko executor entrypoint.
   "$apptainer" run --cleanenv \
     --env "DOCKER_CONFIG=/docker-config" \
+    --env "KANIKO_DIR=/kaniko-work" \
     --bind "$repo_dir:/workspace" \
     --bind "$kaniko_cfg:/docker-config:ro" \
+    --bind "$kaniko_work:/kaniko-work" \
     --bind /mnt/nfs \
-    "$kaniko_image" \
+    "$kaniko_sif" \
+    -- \
+    --kaniko-dir=/kaniko-work \
     --dockerfile=container/Dockerfile \
-    --context="dir:///workspace" \
+    --context=dir:///workspace \
     --destination="$image" \
     --destination="${image_base}:latest" \
     --cache=false
@@ -174,12 +201,13 @@ push_with_podman_or_docker() {
     return 1
   fi
 
+  local authfile
+  authfile="$(resolve_authfile)"
   if [[ -n "${DOCKERHUB_TOKEN:-}" ]]; then
     echo "$DOCKERHUB_TOKEN" | "${builder[@]}" login docker.io -u "$user" --password-stdin
   fi
-
-  "${builder[@]}" push "$image"
-  "${builder[@]}" push "${image_base}:latest"
+  "${builder[@]}" push --authfile "$authfile" "$image"
+  "${builder[@]}" push --authfile "$authfile" "${image_base}:latest"
 }
 
 main() {
@@ -187,19 +215,16 @@ main() {
   echo "Target: $image (+ ${image_base}:latest)"
   echo
 
-  if [[ "${ASL_AI_USE_KANIKO:-}" == 1 ]]; then
-    push_with_kaniko
+  if [[ "${ASL_AI_USE_DOCKER_BUILD:-}" == 1 ]]; then
+    push_with_podman_or_docker
   elif push_with_podman_or_docker 2>/dev/null; then
     :
-  elif push_with_apptainer_from_sif 2>/dev/null; then
+  elif push_sif_to_dockerhub 2>/dev/null; then
     :
   else
-    echo "podman/docker build unavailable on this host (common on OOD - no subuid)." >&2
-    echo "Falling back to Kaniko via Apptainer..." >&2
-    if ! push_with_kaniko 2>/dev/null; then
-      echo "Kaniko failed; trying apptainer push from local SIF..." >&2
-      push_with_apptainer_from_sif
-    fi
+    echo "podman/skopeo unavailable on this host — using Kaniko via Apptainer." >&2
+    ensure_sif
+    push_with_kaniko
   fi
 
   echo
