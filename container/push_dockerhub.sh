@@ -73,10 +73,30 @@ EOF
   echo "$cfg"
 }
 
+push_with_apptainer_from_sif() {
+  local apptainer sif="$compute_dir/asl_ai_compute.sif"
+  apptainer="$(apptainer_cmd)"
+
+  if [[ ! -f "$sif" ]]; then
+    def="$repo_dir/container/asl_ai_compute.def"
+    [[ -f "$def" ]] || { echo "Missing SIF and Apptainer def: $def" >&2; return 1; }
+    echo "Building local SIF for Docker Hub export..."
+    "$apptainer" build "$sif" "$def"
+  fi
+
+  echo "Pushing SIF to Docker Hub via apptainer push..."
+  echo "  sif:    $sif"
+  echo "  image:  $image"
+  "$apptainer" push "$sif" "docker://${image_base}:${tag}"
+  "$apptainer" push "$sif" "docker://${image_base}:latest"
+}
+
 push_with_kaniko() {
-  local apptainer kaniko_cfg
+  local apptainer kaniko_cfg kaniko_work
   apptainer="$(apptainer_cmd)"
   kaniko_cfg="$(docker_config_dir)"
+  kaniko_work="$build_tmp/kaniko-work"
+  mkdir -p "$kaniko_work"
   local kaniko_image="${ASL_AI_KANIKO_IMAGE:-docker://gcr.io/kaniko-project/executor:v1.23.2}"
 
   echo "Building and pushing with Kaniko (Apptainer)..."
@@ -87,9 +107,10 @@ push_with_kaniko() {
   "$apptainer" run --cleanenv \
     --bind "$repo_dir:/workspace" \
     --bind "$kaniko_cfg:/kaniko/.docker:ro" \
+    --bind "$kaniko_work:/kaniko" \
     --bind /mnt/nfs \
     "$kaniko_image" \
-    --dockerfile=/workspace/container/Dockerfile \
+    --dockerfile=container/Dockerfile \
     --context="dir:///workspace" \
     --destination="$image" \
     --destination="${image_base}:latest" \
@@ -137,10 +158,15 @@ main() {
     push_with_kaniko
   elif push_with_podman_or_docker 2>/dev/null; then
     :
+  elif push_with_apptainer_from_sif 2>/dev/null; then
+    :
   else
     echo "podman/docker build unavailable on this host (common on OOD - no subuid)." >&2
     echo "Falling back to Kaniko via Apptainer..." >&2
-    push_with_kaniko
+    if ! push_with_kaniko 2>/dev/null; then
+      echo "Kaniko failed; trying apptainer push from local SIF..." >&2
+      push_with_apptainer_from_sif
+    fi
   fi
 
   echo
