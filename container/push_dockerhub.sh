@@ -92,14 +92,14 @@ push_with_apptainer_from_sif() {
 }
 
 push_with_kaniko() {
-  local apptainer kaniko_work
+  local apptainer kaniko_cfg
   apptainer="$(apptainer_cmd)"
-  kaniko_work="$build_tmp/kaniko-work"
-  mkdir -p "$kaniko_work/.docker"
+  kaniko_cfg="$build_tmp/kaniko-docker-config"
+  mkdir -p "$kaniko_cfg"
   if [[ -n "${DOCKERHUB_TOKEN:-}" ]]; then
     local auth
     auth="$(printf '%s:%s' "$user" "$DOCKERHUB_TOKEN" | base64 | tr -d '\n')"
-    cat > "$kaniko_work/.docker/config.json" <<EOF
+    cat > "$kaniko_cfg/config.json" <<EOF
 {
   "auths": {
     "https://index.docker.io/v1/": {
@@ -108,10 +108,12 @@ push_with_kaniko() {
   }
 }
 EOF
+  elif [[ -f "${HOME}/.docker/config.json" ]]; then
+    cp "${HOME}/.docker/config.json" "$kaniko_cfg/config.json"
   elif [[ -f "${HOME}/.config/containers/auth.json" ]]; then
-    cp "${HOME}/.config/containers/auth.json" "$kaniko_work/.docker/config.json"
+    cp "${HOME}/.config/containers/auth.json" "$kaniko_cfg/config.json"
   elif [[ -f "${XDG_RUNTIME_DIR:-}/containers/auth.json" ]]; then
-    cp "${XDG_RUNTIME_DIR}/containers/auth.json" "$kaniko_work/.docker/config.json"
+    cp "${XDG_RUNTIME_DIR}/containers/auth.json" "$kaniko_cfg/config.json"
   else
     cat >&2 <<EOF
 Docker Hub credentials required. Either:
@@ -121,7 +123,7 @@ Docker Hub credentials required. Either:
 
 or run once:
 
-  podman login docker.io
+  podman login docker.io -u $user
 
 Then rerun: ./container/push_dockerhub.sh $tag
 EOF
@@ -136,8 +138,9 @@ EOF
   echo "  tmp:    $build_tmp"
 
   "$apptainer" run --cleanenv \
+    --env "DOCKER_CONFIG=/docker-config" \
     --bind "$repo_dir:/workspace" \
-    --bind "$kaniko_work:/kaniko" \
+    --bind "$kaniko_cfg:/docker-config:ro" \
     --bind /mnt/nfs \
     "$kaniko_image" \
     --dockerfile=container/Dockerfile \
