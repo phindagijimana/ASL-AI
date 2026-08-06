@@ -44,7 +44,7 @@ done
 
 if [[ -z "$sif" ]]; then
   sif="$compute_dir/asl_ai_compute.sif"
-  docker_ref="${ASL_AI_DOCKER_REF:-docker://phindagijimana/asl-ai-compute:latest}"
+  docker_ref="${ASL_AI_DOCKER_REF:-docker://phindagijimana321/asl-ai-compute:latest}"
   build_tmp="$compute_dir/build-tmp"
   mkdir -p "$build_tmp" "$compute_dir/cache"
   if ! "$APPTAINER" pull "$sif" "$docker_ref"; then

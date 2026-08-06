@@ -8,7 +8,7 @@
 
 # Build ASL-AI compute Docker image and push to Docker Hub.
 # Requires Docker Hub credentials on the build node:
-#   export DOCKERHUB_USER=phindagijimana
+#   export DOCKERHUB_USER=phindagijimana321
 #   export DOCKERHUB_TOKEN=...
 # or: podman login docker.io  (before sbatch)
 

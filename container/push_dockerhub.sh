@@ -2,14 +2,14 @@
 # Build and push the ASL-AI compute image to Docker Hub.
 #
 # Usage:
-#   export DOCKERHUB_USER=phindagijimana
+#   export DOCKERHUB_USER=phindagijimana321
 #   export DOCKERHUB_TOKEN=<docker hub access token>
 #   ./container/push_dockerhub.sh [tag]
 #
 # On URMC OOD/compute nodes, podman/docker build often fails (no subuid).
 # This script falls back to Kaniko via Apptainer, which works on the cluster.
 #
-# Default image: docker.io/phindagijimana/asl-ai-compute:<tag>
+# Default image: docker.io/phindagijimana321/asl-ai-compute:<tag>
 # Override with ASL_AI_DOCKER_IMAGE (full name without tag).
 # Force Kaniko: ASL_AI_USE_KANIKO=1 ./container/push_dockerhub.sh
 
@@ -17,9 +17,9 @@ set -euo pipefail
 
 repo_dir="$(cd "$(dirname "$0")/.." && pwd)"
 tag="${1:-latest}"
-image_base="${ASL_AI_DOCKER_IMAGE:-docker.io/phindagijimana/asl-ai-compute}"
+image_base="${ASL_AI_DOCKER_IMAGE:-docker.io/phindagijimana321/asl-ai-compute}"
 image="${image_base}:${tag}"
-user="${DOCKERHUB_USER:-phindagijimana}"
+user="${DOCKERHUB_USER:-phindagijimana321}"
 
 build_tmp="$repo_dir/compute/build-tmp"
 mkdir -p "$build_tmp" "$repo_dir/compute/cache"
@@ -202,7 +202,7 @@ main() {
   echo
   echo "Published: $image"
   echo "Apptainer pull example:"
-  echo "  apptainer pull docker://phindagijimana/asl-ai-compute:${tag}"
+  echo "  apptainer pull docker://phindagijimana321/asl-ai-compute:${tag}"
 }
 
 main "$@"
